@@ -1,5 +1,6 @@
 import json
 import random
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -12,6 +13,37 @@ RACK_SIZE = 7
 DEMO_LETTER_POOL = list(
     "АААААББВВГГДДЕЕЕЕЕЖЗЗИИИИЙККЛЛММННННОООООППРРРСССТТТУУУФХЦЧШЩЫЭЮЯЬ"
 )
+
+
+@dataclass
+class CellState:
+    row: int
+    col: int
+    letter: str = ""
+
+    @property
+    def is_empty(self):
+        return self.letter == ""
+
+
+def create_board():
+    board = []
+
+    for row in range(BOARD_SIZE):
+        board_row = []
+
+        for col in range(BOARD_SIZE):
+            board_row.append(CellState(row=row, col=col))
+
+        board.append(board_row)
+
+    return board
+
+
+def clear_board_state(board):
+    for row in board:
+        for cell in row:
+            cell.letter = ""
 
 
 def normalize_word(word):

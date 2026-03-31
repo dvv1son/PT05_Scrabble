@@ -4,6 +4,8 @@ from tkinter import messagebox
 from game_logic import (
     BOARD_SIZE,
     calculate_word_score,
+    clear_board_state,
+    create_board,
     format_points,
     get_next_player,
     load_letter_scores,
@@ -19,6 +21,8 @@ class GameWindow(tk.Frame):
 
         self.words = load_words()
         self.letter_scores = load_letter_scores()
+
+        self.board = create_board()
 
         self.current_player = 1
         self.scores = {
@@ -50,7 +54,7 @@ class GameWindow(tk.Frame):
     def create_widgets(self):
         title = tk.Label(
             self,
-            text="Скрэббл 0.2",
+            text="Скрэббл 0.3",
             font=("Arial", 20, "bold"),
             pady=10,
         )
@@ -216,7 +220,10 @@ class GameWindow(tk.Frame):
         start_col = max((BOARD_SIZE - len(word)) // 2, 0)
 
         for index, letter in enumerate(word):
-            self.board_labels[self.next_row][start_col + index]["text"] = letter
+            col = start_col + index
+
+            self.board[self.next_row][col].letter = letter
+            self.board_labels[self.next_row][col]["text"] = letter
 
         self.next_row += 1
         return True
@@ -227,10 +234,16 @@ class GameWindow(tk.Frame):
         self.score_2_var.set(str(self.scores[2]))
         self.letters_var.set("   ".join(self.player_letters[self.current_player]))
 
+    def refresh_board_view(self):
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                self.board_labels[row][col].config(
+                    text=self.board[row][col].letter
+                )
+
     def clear_board(self):
-        for row in self.board_labels:
-            for cell in row:
-                cell.config(text="")
+        clear_board_state(self.board)
+        self.refresh_board_view()
 
     def new_game(self):
         self.current_player = 1
