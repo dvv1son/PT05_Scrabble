@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox
 
+from file_manager import load_board_layout
 from game_logic import (
     BOARD_SIZE,
     calculate_word_score,
@@ -15,14 +16,49 @@ from game_logic import (
 )
 
 
+BONUS_VIEW = {
+    "normal": {
+        "text": "",
+        "bg": "#f5f2ea",
+        "fg": "#2f2f2f",
+    },
+    "double_letter": {
+        "text": "2Б",
+        "bg": "#8fcaf0",
+        "fg": "#12344d",
+    },
+    "triple_letter": {
+        "text": "3Б",
+        "bg": "#4c8bea",
+        "fg": "white",
+    },
+    "double_word": {
+        "text": "2С",
+        "bg": "#e9a8bd",
+        "fg": "#5e1b2c",
+    },
+    "triple_word": {
+        "text": "3С",
+        "bg": "#ee6666",
+        "fg": "white",
+    },
+    "start": {
+        "text": "★",
+        "bg": "#f2c744",
+        "fg": "#4f3d00",
+    },
+}
+
+
 class GameWindow(tk.Frame):
     def __init__(self, master):
         super().__init__(master)
 
         self.words = load_words()
         self.letter_scores = load_letter_scores()
+        self.board_layout = load_board_layout()
 
-        self.board = create_board()
+        self.board = create_board(self.board_layout)
 
         self.current_player = 1
         self.scores = {
@@ -54,7 +90,7 @@ class GameWindow(tk.Frame):
     def create_widgets(self):
         title = tk.Label(
             self,
-            text="Скрэббл 0.3",
+            text="Скрэббл 0.5",
             font=("Arial", 20, "bold"),
             pady=10,
         )
@@ -110,7 +146,7 @@ class GameWindow(tk.Frame):
 
         board_wrapper = tk.LabelFrame(
             left_panel,
-            text="Игровое поле 10x10",
+            text="Игровое поле 15x15",
             padx=10,
             pady=10,
         )
@@ -123,15 +159,19 @@ class GameWindow(tk.Frame):
             row_labels = []
 
             for col in range(BOARD_SIZE):
+                cell_state = self.board[row][col]
+                view = self.get_cell_view(cell_state)
+
                 cell = tk.Label(
                     board_frame,
-                    text="",
+                    text=view["text"],
                     width=4,
                     height=2,
                     relief="solid",
                     bd=1,
-                    font=("Arial", 12, "bold"),
-                    bg="#f5f2ea",
+                    font=("Arial", 9, "bold"),
+                    bg=view["bg"],
+                    fg=view["fg"],
                 )
                 cell.grid(row=row, column=col, padx=1, pady=1)
                 row_labels.append(cell)
@@ -213,6 +253,16 @@ class GameWindow(tk.Frame):
             height=2,
         ).pack(fill="x", pady=5)
 
+    def get_cell_view(self, cell):
+        if cell.letter:
+            return {
+                "text": cell.letter,
+                "bg": "#fff2d9",
+                "fg": "#1e1e1e",
+            }
+
+        return BONUS_VIEW.get(cell.bonus, BONUS_VIEW["normal"])
+
     def place_word_on_board(self, word):
         if self.next_row >= BOARD_SIZE:
             return False
@@ -222,10 +272,13 @@ class GameWindow(tk.Frame):
         for index, letter in enumerate(word):
             col = start_col + index
 
+            if col >= BOARD_SIZE:
+                return False
+
             self.board[self.next_row][col].letter = letter
-            self.board_labels[self.next_row][col]["text"] = letter
 
         self.next_row += 1
+        self.refresh_board_view()
         return True
 
     def update_labels(self):
@@ -237,8 +290,13 @@ class GameWindow(tk.Frame):
     def refresh_board_view(self):
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
+                cell_state = self.board[row][col]
+                view = self.get_cell_view(cell_state)
+
                 self.board_labels[row][col].config(
-                    text=self.board[row][col].letter
+                    text=view["text"],
+                    bg=view["bg"],
+                    fg=view["fg"],
                 )
 
     def clear_board(self):
@@ -292,7 +350,7 @@ class GameWindow(tk.Frame):
         if len(word) > BOARD_SIZE:
             messagebox.showwarning(
                 "Слишком длинное слово",
-                f"Для этой MVP-версии длина слова не должна превышать {BOARD_SIZE} букв.",
+                f"Длина слова не должна превышать {BOARD_SIZE} букв.",
             )
             return
 

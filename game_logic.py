@@ -7,7 +7,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
-BOARD_SIZE = 10
+BOARD_SIZE = 15
 RACK_SIZE = 7
 
 DEMO_LETTER_POOL = list(
@@ -19,6 +19,7 @@ DEMO_LETTER_POOL = list(
 class CellState:
     row: int
     col: int
+    bonus: str = "normal"
     letter: str = ""
 
     @property
@@ -26,14 +27,33 @@ class CellState:
         return self.letter == ""
 
 
-def create_board():
+def build_bonus_map(board_layout):
+    bonus_map = {}
+
+    for bonus_name, cells in board_layout.items():
+        for row, col in cells:
+            bonus_map[(row, col)] = bonus_name
+
+    return bonus_map
+
+
+def create_board(board_layout=None):
+    if board_layout is None:
+        board_layout = {}
+
+    bonus_map = build_bonus_map(board_layout)
     board = []
 
     for row in range(BOARD_SIZE):
         board_row = []
 
         for col in range(BOARD_SIZE):
-            board_row.append(CellState(row=row, col=col))
+            cell = CellState(
+                row=row,
+                col=col,
+                bonus=bonus_map.get((row, col), "normal"),
+            )
+            board_row.append(cell)
 
         board.append(board_row)
 
