@@ -1,25 +1,19 @@
+import random
 import tkinter as tk
 from tkinter import messagebox
 
-from file_manager import load_board_layout
-from game_logic import (
-    BOARD_SIZE,
-    calculate_word_score,
-    clear_board_state,
-    create_board,
-    format_points,
-    get_next_player,
-    load_letter_scores,
-    load_words,
-    normalize_word,
-    random_letters,
-)
+from file_manager import load_board_layout, load_letters, load_words
+from game_logic import BOARD_SIZE, create_board, evaluate_move
 
+
+CELL_SIZE = 39
+HEADER_SIZE = 28
+BOARD_CANVAS_SIZE = HEADER_SIZE + BOARD_SIZE * CELL_SIZE
 
 BONUS_VIEW = {
     "normal": {
         "text": "",
-        "bg": "#f5f2ea",
+        "bg": "#efe6d6",
         "fg": "#2f2f2f",
     },
     "double_letter": {
@@ -52,367 +46,531 @@ BONUS_VIEW = {
 
 class GameWindow(tk.Frame):
     def __init__(self, master):
-        super().__init__(master)
+        super().__init__(master, bg="#f7f7f3")
 
         self.words = load_words()
-        self.letter_scores = load_letter_scores()
+        self.letters_scores = load_letters()
         self.board_layout = load_board_layout()
 
         self.board = create_board(self.board_layout)
 
-        self.current_player = 1
-        self.scores = {
-            1: 0,
-            2: 0,
-        }
-        self.player_letters = {
-            1: [],
-            2: [],
-        }
-        self.used_words = set()
-        self.next_row = 0
-        self.turn_word_checked = False
+        self.current_player = 0
 
-        self.word_var = tk.StringVar()
+        self.players = [
+            {
+                "name": "Игрок 1",
+                "score": 0,
+                "rack": [],
+            },
+            {
+                "name": "Игрок 2",
+                "score": 0,
+                "rack": [],
+            },
+        ]
+
+        self.bag = self.create_letter_bag()
+        self.pending_tiles = {}
+        self.selected_rack_index = None
+
+        self.rack_buttons = []
+
         self.current_player_var = tk.StringVar()
-        self.score_1_var = tk.StringVar()
-        self.score_2_var = tk.StringVar()
-        self.letters_var = tk.StringVar()
-        self.status_var = tk.StringVar(
-            value="Введите слово и нажмите «Проверить слово»."
-        )
+        self.score_var = tk.StringVar()
+        self.selected_var = tk.StringVar()
+        self.bag_var = tk.StringVar()
+        self.status_var = tk.StringVar()
 
-        self.board_labels = []
+        self.board_canvas = None
 
+        self.start_game()
         self.create_widgets()
-        self.new_game()
+        self.refresh_all()
+
+    def start_game(self):
+        for player_index in range(2):
+            self.players[player_index]["score"] = 0
+            self.players[player_index]["rack"] = []
+            self.refill_rack(player_index)
+
+        self.status_var.set("Выберите букву и поставьте её на поле.")
+
+    def create_letter_bag(self):
+        bag = []
+
+        for letter, score in self.letters_scores.items():
+            if score <= 1:
+                count = 8
+            elif score <= 2:
+                count = 6
+            elif score <= 3:
+                count = 4
+            elif score <= 5:
+                count = 2
+            else:
+                count = 1
+
+            bag.extend([letter] * count)
+
+        random.shuffle(bag)
+        return bag
+
+    def refill_rack(self, player_index):
+        rack = self.players[player_index]["rack"]
+
+        while len(rack) < 7:
+            rack.append("")
+
+        for i in range(7):
+            if rack[i] == "" and self.bag:
+                rack[i] = self.bag.pop()
 
     def create_widgets(self):
         title = tk.Label(
             self,
-            text="Скрэббл 0.5",
-            font=("Arial", 20, "bold"),
-            pady=10,
+            text="Скрэббл 0.9",
+            font=("Segoe UI", 18, "bold"),
+            bg="#f7f7f3",
+            fg="#063f25",
         )
-        title.pack()
+        title.pack(pady=(8, 4))
 
-        main_frame = tk.Frame(self, padx=10, pady=10)
-        main_frame.pack(fill="both", expand=True)
+        content = tk.Frame(self, bg="#f7f7f3")
+        content.pack(fill="both", expand=False, padx=12, pady=4)
 
-        left_panel = tk.Frame(main_frame)
-        left_panel.pack(side="left", fill="both", expand=True)
+        left_part = tk.Frame(content, bg="#f7f7f3")
+        left_part.pack(side="left", padx=(0, 12), pady=0)
 
-        right_panel = tk.Frame(main_frame, width=280, padx=10)
-        right_panel.pack(side="right", fill="y")
+        right_part = tk.Frame(
+            content,
+            bg="#ffffff",
+            width=250,
+            height=460,
+            bd=1,
+            relief="groove",
+        )
+        right_part.pack(side="right", fill="y")
+        right_part.pack_propagate(False)
 
-        info_frame = tk.Frame(left_panel)
-        info_frame.pack(fill="x", pady=(0, 10))
+        self.create_board_canvas(left_part)
+        self.create_side_panel(right_part)
+        self.create_rack_panel()
+
+    def create_board_canvas(self, parent):
+        self.board_canvas = tk.Canvas(
+            parent,
+            width=BOARD_CANVAS_SIZE,
+            height=BOARD_CANVAS_SIZE,
+            bg="#f7f7f3",
+            highlightthickness=0,
+        )
+        self.board_canvas.pack()
+
+        self.board_canvas.bind("<Button-1>", self.on_canvas_click)
+
+    def create_side_panel(self, side):
+        panel_inner = tk.Frame(side, bg="#ffffff")
+        panel_inner.pack(fill="both", expand=True, padx=10, pady=10)
 
         tk.Label(
-            info_frame,
-            text="Текущий игрок:",
-            font=("Arial", 12, "bold"),
-        ).grid(row=0, column=0, sticky="w")
-
-        tk.Label(
-            info_frame,
+            panel_inner,
             textvariable=self.current_player_var,
-            font=("Arial", 12),
-        ).grid(row=0, column=1, sticky="w", padx=5)
-
-        tk.Label(
-            info_frame,
-            text="Очки Игрока 1:",
-            font=("Arial", 12, "bold"),
-        ).grid(row=1, column=0, sticky="w")
-
-        tk.Label(
-            info_frame,
-            textvariable=self.score_1_var,
-            font=("Arial", 12),
-        ).grid(row=1, column=1, sticky="w", padx=5)
-
-        tk.Label(
-            info_frame,
-            text="Очки Игрока 2:",
-            font=("Arial", 12, "bold"),
-        ).grid(row=2, column=0, sticky="w")
-
-        tk.Label(
-            info_frame,
-            textvariable=self.score_2_var,
-            font=("Arial", 12),
-        ).grid(row=2, column=1, sticky="w", padx=5)
-
-        board_wrapper = tk.LabelFrame(
-            left_panel,
-            text="Игровое поле 15x15",
-            padx=10,
-            pady=10,
-        )
-        board_wrapper.pack(fill="both", expand=True)
-
-        board_frame = tk.Frame(board_wrapper)
-        board_frame.pack()
-
-        for row in range(BOARD_SIZE):
-            row_labels = []
-
-            for col in range(BOARD_SIZE):
-                cell_state = self.board[row][col]
-                view = self.get_cell_view(cell_state)
-
-                cell = tk.Label(
-                    board_frame,
-                    text=view["text"],
-                    width=4,
-                    height=2,
-                    relief="solid",
-                    bd=1,
-                    font=("Arial", 9, "bold"),
-                    bg=view["bg"],
-                    fg=view["fg"],
-                )
-                cell.grid(row=row, column=col, padx=1, pady=1)
-                row_labels.append(cell)
-
-            self.board_labels.append(row_labels)
-
-        letters_frame = tk.LabelFrame(
-            left_panel,
-            text="Буквы текущего игрока",
-            padx=10,
-            pady=10,
-        )
-        letters_frame.pack(fill="x", pady=10)
-
-        tk.Label(
-            letters_frame,
-            textvariable=self.letters_var,
-            font=("Consolas", 16, "bold"),
-            anchor="w",
-        ).pack(fill="x")
-
-        status_frame = tk.LabelFrame(
-            left_panel,
-            text="Статус",
-            padx=10,
-            pady=10,
-        )
-        status_frame.pack(fill="x")
-
-        tk.Label(
-            status_frame,
-            textvariable=self.status_var,
-            wraplength=600,
+            font=("Segoe UI", 13, "bold"),
+            bg="#ffffff",
+            wraplength=220,
             justify="left",
-            anchor="w",
-        ).pack(fill="x")
-
-        control_frame = tk.LabelFrame(
-            right_panel,
-            text="Управление",
-            padx=10,
-            pady=10,
-        )
-        control_frame.pack(fill="x")
+        ).pack(anchor="w", pady=(0, 16))
 
         tk.Label(
-            control_frame,
-            text="Введите слово:",
-            font=("Arial", 12, "bold"),
+            panel_inner,
+            text="Счёт",
+            font=("Segoe UI", 12, "bold"),
+            bg="#ffffff",
         ).pack(anchor="w")
 
-        tk.Entry(
-            control_frame,
-            textvariable=self.word_var,
-            font=("Arial", 14),
-        ).pack(fill="x", pady=(5, 10))
+        tk.Label(
+            panel_inner,
+            textvariable=self.score_var,
+            font=("Segoe UI", 11),
+            bg="#ffffff",
+            justify="left",
+            wraplength=220,
+        ).pack(anchor="w", pady=(4, 16))
+
+        tk.Label(
+            panel_inner,
+            text="Выбранная буква",
+            font=("Segoe UI", 12, "bold"),
+            bg="#ffffff",
+        ).pack(anchor="w")
+
+        tk.Label(
+            panel_inner,
+            textvariable=self.selected_var,
+            font=("Segoe UI", 11),
+            bg="#ffffff",
+            justify="left",
+            wraplength=220,
+        ).pack(anchor="w", pady=(4, 16))
+
+        tk.Label(
+            panel_inner,
+            textvariable=self.bag_var,
+            font=("Segoe UI", 10),
+            bg="#ffffff",
+            wraplength=220,
+        ).pack(anchor="w", pady=(0, 16))
+
+        tk.Label(
+            panel_inner,
+            textvariable=self.status_var,
+            font=("Segoe UI", 10),
+            bg="#ffffff",
+            wraplength=220,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 16))
+
+        button_style = {
+            "font": ("Segoe UI", 10),
+            "height": 2,
+            "bg": "#f8f8f8",
+            "activebackground": "#e7f2ec",
+            "wraplength": 210,
+            "justify": "center",
+        }
 
         tk.Button(
-            control_frame,
-            text="Проверить слово",
-            font=("Arial", 12),
-            command=self.check_word,
-            height=2,
-        ).pack(fill="x", pady=5)
+            panel_inner,
+            text="Проверить ход",
+            command=self.check_move,
+            **button_style,
+        ).pack(fill="x", pady=4)
 
         tk.Button(
-            control_frame,
-            text="Завершить ход",
-            font=("Arial", 12),
-            command=self.end_turn,
-            height=2,
-        ).pack(fill="x", pady=5)
+            panel_inner,
+            text="Сбросить размещение",
+            command=self.cancel_pending_move,
+            **button_style,
+        ).pack(fill="x", pady=4)
 
         tk.Button(
-            control_frame,
+            panel_inner,
             text="Новая партия",
-            font=("Arial", 12),
-            command=self.new_game,
-            height=2,
-        ).pack(fill="x", pady=5)
+            command=self.restart_game,
+            **button_style,
+        ).pack(fill="x", pady=(20, 4))
+
+    def create_rack_panel(self):
+        rack_frame = tk.Frame(self, bg="#f7f7f3")
+        rack_frame.pack(fill="x", padx=18, pady=(8, 10))
+
+        tk.Label(
+            rack_frame,
+            text="Буквы текущего игрока:",
+            font=("Segoe UI", 11, "bold"),
+            bg="#f7f7f3",
+        ).pack(side="left", padx=(0, 10))
+
+        self.rack_buttons = []
+
+        for i in range(7):
+            btn = tk.Button(
+                rack_frame,
+                width=5,
+                height=2,
+                font=("Segoe UI", 12, "bold"),
+                bg="#fff2d9",
+                activebackground="#f7dfb8",
+                command=lambda index=i: self.on_rack_click(index),
+            )
+            btn.pack(side="left", padx=4)
+
+            self.rack_buttons.append(btn)
 
     def get_cell_view(self, cell):
         if cell.letter:
+            score = self.letters_scores.get(cell.letter.upper(), 0)
+
+            if cell.is_preview:
+                bg = "#cfeecd"
+            else:
+                bg = "#fff2d9"
+
             return {
-                "text": cell.letter,
-                "bg": "#fff2d9",
+                "text": f"{cell.letter}\n{score}",
+                "bg": bg,
                 "fg": "#1e1e1e",
             }
 
         return BONUS_VIEW.get(cell.bonus, BONUS_VIEW["normal"])
 
-    def place_word_on_board(self, word):
-        if self.next_row >= BOARD_SIZE:
-            return False
+    def draw_board(self):
+        self.board_canvas.delete("all")
+        self.draw_headers()
+        self.draw_cells()
 
-        start_col = max((BOARD_SIZE - len(word)) // 2, 0)
+    def draw_headers(self):
+        for col in range(BOARD_SIZE):
+            x = HEADER_SIZE + col * CELL_SIZE + CELL_SIZE / 2
 
-        for index, letter in enumerate(word):
-            col = start_col + index
+            self.board_canvas.create_text(
+                x,
+                HEADER_SIZE / 2,
+                text=str(col + 1),
+                font=("Segoe UI", 8, "bold"),
+                fill="#1f1f1f",
+            )
 
-            if col >= BOARD_SIZE:
-                return False
+        for row in range(BOARD_SIZE):
+            y = HEADER_SIZE + row * CELL_SIZE + CELL_SIZE / 2
+            row_name = chr(ord("A") + row)
 
-            self.board[self.next_row][col].letter = letter
+            self.board_canvas.create_text(
+                HEADER_SIZE / 2,
+                y,
+                text=row_name,
+                font=("Segoe UI", 8, "bold"),
+                fill="#1f1f1f",
+            )
 
-        self.next_row += 1
-        self.refresh_board_view()
-        return True
-
-    def update_labels(self):
-        self.current_player_var.set(f"Игрок {self.current_player}")
-        self.score_1_var.set(str(self.scores[1]))
-        self.score_2_var.set(str(self.scores[2]))
-        self.letters_var.set("   ".join(self.player_letters[self.current_player]))
-
-    def refresh_board_view(self):
+    def draw_cells(self):
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
-                cell_state = self.board[row][col]
-                view = self.get_cell_view(cell_state)
+                cell = self.board[row][col]
+                view = self.get_cell_view(cell)
 
-                self.board_labels[row][col].config(
-                    text=view["text"],
-                    bg=view["bg"],
-                    fg=view["fg"],
+                x1 = HEADER_SIZE + col * CELL_SIZE
+                y1 = HEADER_SIZE + row * CELL_SIZE
+                x2 = x1 + CELL_SIZE
+                y2 = y1 + CELL_SIZE
+
+                self.board_canvas.create_rectangle(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    fill=view["bg"],
+                    outline="#a99f91",
+                    width=1,
                 )
 
-    def clear_board(self):
-        clear_board_state(self.board)
-        self.refresh_board_view()
+                text = view["text"]
 
-    def new_game(self):
-        self.current_player = 1
-        self.scores = {
-            1: 0,
-            2: 0,
-        }
-        self.player_letters = {
-            1: random_letters(),
-            2: random_letters(),
-        }
-        self.used_words = set()
-        self.next_row = 0
-        self.turn_word_checked = False
+                if text:
+                    if cell.letter:
+                        font = ("Segoe UI", 10, "bold")
+                    else:
+                        font = ("Segoe UI", 8, "bold")
 
-        self.word_var.set("")
-        self.status_var.set("Новая партия началась. Ходит Игрок 1.")
+                    self.board_canvas.create_text(
+                        (x1 + x2) / 2,
+                        (y1 + y2) / 2,
+                        text=text,
+                        font=font,
+                        fill=view["fg"],
+                        justify="center",
+                    )
 
-        self.clear_board()
-        self.update_labels()
+    def on_canvas_click(self, event):
+        x = event.x
+        y = event.y
 
-    def check_word(self):
-        if self.turn_word_checked:
-            messagebox.showwarning(
-                "Ход уже сделан",
-                "В этом ходу слово уже принято. Нажмите «Завершить ход».",
-            )
+        if x < HEADER_SIZE or y < HEADER_SIZE:
             return
 
-        word = normalize_word(self.word_var.get())
+        col = int((x - HEADER_SIZE) // CELL_SIZE)
+        row = int((y - HEADER_SIZE) // CELL_SIZE)
 
-        if not word:
-            messagebox.showwarning(
-                "Пустой ввод",
-                "Введите слово перед проверкой.",
-            )
+        if row < 0 or row >= BOARD_SIZE:
             return
 
-        if len(word) < 2:
-            messagebox.showwarning(
-                "Слишком короткое слово",
-                "Слово должно содержать минимум 2 буквы.",
-            )
+        if col < 0 or col >= BOARD_SIZE:
             return
 
-        if len(word) > BOARD_SIZE:
-            messagebox.showwarning(
-                "Слишком длинное слово",
-                f"Длина слова не должна превышать {BOARD_SIZE} букв.",
-            )
-            return
+        self.on_board_click(row, col)
 
-        if word in self.used_words:
-            messagebox.showwarning(
-                "Слово уже было",
-                "Это слово уже использовалось в текущей партии.",
-            )
-            return
+    def refresh_board(self):
+        self.draw_board()
 
-        if word not in self.words:
-            messagebox.showerror(
-                "Слова нет в словаре",
-                f"Слово «{word}» не найдено в data/words.txt.",
-            )
-            self.status_var.set(
-                f"Слово «{word}» отклонено. Попробуйте другое слово."
-            )
-            return
+    def refresh_rack(self):
+        rack = self.players[self.current_player]["rack"]
 
-        if not self.place_word_on_board(word):
-            messagebox.showinfo(
-                "Поле заполнено",
-                "На поле больше нет свободных строк. Начните новую партию.",
-            )
-            return
+        for i, btn in enumerate(self.rack_buttons):
+            letter = rack[i]
 
-        score = calculate_word_score(word, self.letter_scores)
+            if letter:
+                score = self.letters_scores.get(letter, 0)
+                btn.config(
+                    text=f"{letter}\n{score}",
+                    state="normal",
+                )
+            else:
+                btn.config(
+                    text="",
+                    state="disabled",
+                )
 
-        self.scores[self.current_player] += score
-        self.used_words.add(word)
-        self.player_letters[self.current_player] = random_letters()
-        self.turn_word_checked = True
+            if self.selected_rack_index == i:
+                btn.config(
+                    bg="#cfeecd",
+                    relief="sunken",
+                )
+            else:
+                btn.config(
+                    bg="#fff2d9",
+                    relief="raised",
+                )
 
-        self.status_var.set(
-            f"Игрок {self.current_player} сыграл слово «{word}» "
-            f"и получил {format_points(score)}."
+    def refresh_info(self):
+        player_name = self.players[self.current_player]["name"]
+
+        self.current_player_var.set(f"Ходит: {player_name}")
+
+        self.score_var.set(
+            f"Игрок 1: {self.players[0]['score']}\n"
+            f"Игрок 2: {self.players[1]['score']}"
         )
 
-        self.word_var.set("")
-        self.update_labels()
+        self.bag_var.set(f"Букв в мешке: {len(self.bag)}")
 
-    def end_turn(self):
-        if not self.turn_word_checked:
-            answer = messagebox.askyesno(
-                "Завершить ход без слова?",
-                "В этом ходу слово не было принято. Передать ход другому игроку?",
+        if self.selected_rack_index is None:
+            self.selected_var.set("не выбрана")
+        else:
+            rack = self.players[self.current_player]["rack"]
+            letter = rack[self.selected_rack_index]
+
+            if letter:
+                self.selected_var.set(
+                    f"{letter} ({self.letters_scores.get(letter, 0)} очк.)"
+                )
+            else:
+                self.selected_var.set("не выбрана")
+
+    def refresh_all(self):
+        self.refresh_board()
+        self.refresh_rack()
+        self.refresh_info()
+
+    def on_rack_click(self, rack_index):
+        rack = self.players[self.current_player]["rack"]
+
+        if rack[rack_index] == "":
+            return
+
+        if self.selected_rack_index == rack_index:
+            self.selected_rack_index = None
+        else:
+            self.selected_rack_index = rack_index
+
+        self.refresh_rack()
+        self.refresh_info()
+
+    def on_board_click(self, row, col):
+        cell = self.board[row][col]
+
+        if (row, col) in self.pending_tiles:
+            self.remove_preview_tile(row, col)
+            return
+
+        if self.selected_rack_index is None:
+            messagebox.showinfo(
+                "Скрэббл",
+                "Сначала выберите букву на подставке.",
             )
+            return
 
-            if not answer:
-                return
-
-            self.status_var.set(
-                f"Игрок {self.current_player} пропустил ход."
+        if not cell.is_empty:
+            messagebox.showwarning(
+                "Скрэббл",
+                "Эта клетка уже занята.",
             )
+            return
 
-        self.current_player = get_next_player(self.current_player)
-        self.turn_word_checked = False
-        self.word_var.set("")
-        self.update_labels()
+        rack = self.players[self.current_player]["rack"]
+        letter = rack[self.selected_rack_index]
 
-        if "пропустил ход" not in self.status_var.get():
-            self.status_var.set(
-                f"Теперь ходит Игрок {self.current_player}."
-            )
+        self.pending_tiles[(row, col)] = {
+            "letter": letter,
+            "rack_index": self.selected_rack_index,
+        }
+
+        rack[self.selected_rack_index] = ""
+
+        cell.letter = letter
+        cell.is_preview = True
+
+        self.selected_rack_index = None
+        self.status_var.set("Буква размещена временно. Можно проверить ход.")
+
+        self.refresh_all()
+
+    def remove_preview_tile(self, row, col):
+        info = self.pending_tiles.pop((row, col))
+        rack = self.players[self.current_player]["rack"]
+
+        rack[info["rack_index"]] = info["letter"]
+
+        cell = self.board[row][col]
+        cell.letter = ""
+        cell.is_preview = False
+
+        self.status_var.set("Буква возвращена на подставку.")
+
+        self.refresh_all()
+
+    def cancel_pending_move(self):
+        for row, col in list(self.pending_tiles.keys()):
+            self.remove_preview_tile(row, col)
+
+        self.selected_rack_index = None
+        self.status_var.set("Текущее размещение сброшено.")
+        self.refresh_all()
+
+    def check_move(self):
+        ok, error_text, words, score = evaluate_move(
+            self.board,
+            self.pending_tiles.keys(),
+            self.words,
+            self.letters_scores,
+        )
+
+        if not ok:
+            messagebox.showwarning("Ход не принят", error_text)
+            self.status_var.set(error_text)
+            return
+
+        words_text = ", ".join(words)
+
+        messagebox.showinfo(
+            "Ход корректен",
+            f"Слова: {words_text}\n"
+            f"Предварительные очки: {score}\n\n"
+            f"На следующем этапе будет добавлено подтверждение хода.",
+        )
+
+        self.status_var.set(
+            f"Ход корректен. Слова: {words_text}. Предварительные очки: {score}."
+        )
+
+    def restart_game(self):
+        self.board = create_board(self.board_layout)
+        self.current_player = 0
+        self.players = [
+            {
+                "name": "Игрок 1",
+                "score": 0,
+                "rack": [],
+            },
+            {
+                "name": "Игрок 2",
+                "score": 0,
+                "rack": [],
+            },
+        ]
+
+        self.bag = self.create_letter_bag()
+        self.pending_tiles = {}
+        self.selected_rack_index = None
+
+        self.start_game()
+        self.refresh_all()

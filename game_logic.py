@@ -1,18 +1,20 @@
-import json
-import random
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Optional
 
-
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
 
 BOARD_SIZE = 15
-RACK_SIZE = 7
+CENTER = (7, 7)
 
-DEMO_LETTER_POOL = list(
-    "АААААББВВГГДДЕЕЕЕЕЖЗЗИИИИЙККЛЛММННННОООООППРРРСССТТТУУУФХЦЧШЩЫЭЮЯЬ"
-)
+LETTER_BONUSES = {
+    "double_letter": 2,
+    "triple_letter": 3,
+}
+
+WORD_BONUSES = {
+    "start": 2,
+    "double_word": 2,
+    "triple_word": 3,
+}
 
 
 @dataclass
@@ -21,6 +23,9 @@ class CellState:
     col: int
     bonus: str = "normal"
     letter: str = ""
+    owner: Optional[int] = None
+    bonus_used: bool = False
+    is_preview: bool = False
 
     @property
     def is_empty(self):
@@ -37,10 +42,7 @@ def build_bonus_map(board_layout):
     return bonus_map
 
 
-def create_board(board_layout=None):
-    if board_layout is None:
-        board_layout = {}
-
+def create_board(board_layout):
     bonus_map = build_bonus_map(board_layout)
     board = []
 
@@ -48,90 +50,198 @@ def create_board(board_layout=None):
         board_row = []
 
         for col in range(BOARD_SIZE):
-            cell = CellState(
-                row=row,
-                col=col,
-                bonus=bonus_map.get((row, col), "normal"),
+            board_row.append(
+                CellState(
+                    row=row,
+                    col=col,
+                    bonus=bonus_map.get((row, col), "normal"),
+                )
             )
-            board_row.append(cell)
 
         board.append(board_row)
 
     return board
 
 
-def clear_board_state(board):
+def board_has_committed_letters(board):
     for row in board:
         for cell in row:
-            cell.letter = ""
+            if cell.letter and not cell.is_preview:
+                return True
+
+    return False
 
 
-def normalize_word(word):
-    return word.strip().replace("ё", "е").replace("Ё", "Е").upper()
+def collect_word_positions(board, row, col, dr, dc):
+    while 0 <= row - dr < BOARD_SIZE and 0 <= col - dc < BOARD_SIZE:
+        if board[row - dr][col - dc].letter == "":
+            break
+
+        row -= dr
+        col -= dc
+
+    positions = []
+
+    while 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE:
+        if board[row][col].letter == "":
+            break
+
+        positions.append((row, col))
+
+        row += dr
+        col += dc
+
+    return positions
 
 
-def load_words():
-    path = DATA_DIR / "words.txt"
+def score_word(board, positions, pending_positions, letters_scores):
+    total = 0
+    word_multiplier = 1
 
-    if not path.exists():
-        raise FileNotFoundError(f"Не найден файл словаря: {path}")
+    for row, col in positions:
+        cell = board[row][col]
+        letter_value = letters_scores.get(cell.letter.upper(), 0)
 
-    with path.open("r", encoding="utf-8") as file:
-        return {
-            normalize_word(line)
-            for line in file
-            if line.strip()
-        }
+        if (row, col) in pending_positions and not cell.bonus_used:
+            if cell.bonus in LETTER_BONUSES:
+                letter_value *= LETTER_BONUSES[cell.bonus]
+            elif cell.bonus in WORD_BONUSES:
+                word_multiplier *= WORD_BONUSES[cell.bonus]
 
+        total += letter_value
 
-def load_letter_scores():
-    path = DATA_DIR / "letters.json"
-
-    if not path.exists():
-        raise FileNotFoundError(f"Не найден файл очков букв: {path}")
-
-    with path.open("r", encoding="utf-8") as file:
-        data = json.load(file)
-
-    return {
-        normalize_word(letter): int(score)
-        for letter, score in data.items()
-    }
+    return total * word_multiplier
 
 
-def random_letters():
-    return [
-        random.choice(DEMO_LETTER_POOL)
-        for _ in range(RACK_SIZE)
-    ]
+def remove_duplicate_words(words_positions):
+    unique = []
+    seen = set()
+
+    for positions in words_positions:
+        key = tuple(positions)
+
+        if key not in seen:
+            seen.add(key)
+            unique.append(positions)
+
+    return unique
 
 
-def calculate_word_score(word, letter_scores):
-    score = 0
+def has_gap_in_row(board, row, min_col, max_col):
+    for col in range(min_col, max_col + 1):
+        if board[row][col].letter == "":
+            return True
 
-    for letter in word:
-        score += letter_scores.get(letter, 0)
-
-    return score
-
-
-def format_points(number):
-    if 11 <= number % 100 <= 14:
-        return f"{number} баллов"
-
-    last_digit = number % 10
-
-    if last_digit == 1:
-        return f"{number} балл"
-
-    if last_digit in (2, 3, 4):
-        return f"{number} балла"
-
-    return f"{number} баллов"
+    return False
 
 
-def get_next_player(current_player):
-    if current_player == 1:
-        return 2
+def has_gap_in_col(board, col, min_row, max_row):
+    for row in range(min_row, max_row + 1):
+        if board[row][col].letter == "":
+            return True
 
-    return 1
+    return False
+
+
+def touches_old_tile(board, pending_positions):
+    for row, col in pending_positions:
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nr = row + dr
+            nc = col + dc
+
+            if 0 <= nr < BOARD_SIZE and 0 <= nc < BOARD_SIZE:
+                if board[nr][nc].letter and (nr, nc) not in pending_positions:
+                    return True
+
+    return False
+
+
+def evaluate_move(board, pending_positions, words_set, letters_scores):
+    pending_positions = set(pending_positions)
+
+    if not pending_positions:
+        return False, "Нужно поставить хотя бы одну букву.", [], 0
+
+    rows = {row for row, _ in pending_positions}
+    cols = {col for _, col in pending_positions}
+
+    words_positions = []
+    is_first_move = not board_has_committed_letters(board)
+
+    if is_first_move and CENTER not in pending_positions:
+        return False, "Первый ход должен проходить через центральную клетку со звездой.", [], 0
+
+    if len(pending_positions) > 1 and len(rows) != 1 and len(cols) != 1:
+        return False, "Новые буквы должны стоять в одной строке или одном столбце.", [], 0
+
+    if len(rows) == 1 and len(pending_positions) > 1:
+        row = next(iter(rows))
+        min_col = min(cols)
+        max_col = max(cols)
+
+        if has_gap_in_row(board, row, min_col, max_col):
+            return False, "Между буквами есть разрыв.", [], 0
+
+        main_word = collect_word_positions(board, row, min_col, 0, 1)
+
+        if len(main_word) > 1:
+            words_positions.append(main_word)
+
+        for r, c in pending_positions:
+            cross = collect_word_positions(board, r, c, 1, 0)
+
+            if len(cross) > 1:
+                words_positions.append(cross)
+
+    elif len(cols) == 1 and len(pending_positions) > 1:
+        col = next(iter(cols))
+        min_row = min(rows)
+        max_row = max(rows)
+
+        if has_gap_in_col(board, col, min_row, max_row):
+            return False, "Между буквами есть разрыв.", [], 0
+
+        main_word = collect_word_positions(board, min_row, col, 1, 0)
+
+        if len(main_word) > 1:
+            words_positions.append(main_word)
+
+        for r, c in pending_positions:
+            cross = collect_word_positions(board, r, c, 0, 1)
+
+            if len(cross) > 1:
+                words_positions.append(cross)
+
+    else:
+        row, col = next(iter(pending_positions))
+
+        horizontal = collect_word_positions(board, row, col, 0, 1)
+        vertical = collect_word_positions(board, row, col, 1, 0)
+
+        if len(horizontal) > 1:
+            words_positions.append(horizontal)
+
+        if len(vertical) > 1:
+            words_positions.append(vertical)
+
+        if len(horizontal) == 1 and len(vertical) == 1:
+            return False, "Одна буква должна образовывать слово с соседними буквами.", [], 0
+
+    words_positions = remove_duplicate_words(words_positions)
+
+    if not is_first_move and not touches_old_tile(board, pending_positions):
+        return False, "Ход должен касаться уже существующих букв на поле.", [], 0
+
+    word_texts = []
+    total_score = 0
+
+    for positions in words_positions:
+        word = "".join(board[row][col].letter for row, col in positions).upper()
+
+        if word not in words_set:
+            return False, f"Слова «{word}» нет в словаре.", [], 0
+
+        word_texts.append(word)
+        total_score += score_word(board, positions, pending_positions, letters_scores)
+
+    return True, "", word_texts, total_score
