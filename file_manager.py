@@ -43,6 +43,15 @@ def load_letters():
     return result
 
 
+def load_rules():
+    path = DATA_DIR / "rules.txt"
+
+    if not path.exists():
+        raise FileNotFoundError(f"Не найден файл правил: {path}")
+
+    return path.read_text(encoding="utf-8")
+
+
 def load_board_layout():
     path = DATA_DIR / "board_layout.json"
 

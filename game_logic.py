@@ -245,3 +245,12 @@ def evaluate_move(board, pending_positions, words_set, letters_scores):
         total_score += score_word(board, positions, pending_positions, letters_scores)
 
     return True, "", word_texts, total_score
+
+def commit_move(board, pending_positions, player_number):
+    for row, col in pending_positions:
+        cell = board[row][col]
+        cell.is_preview = False
+        cell.owner = player_number
+
+        if cell.bonus != "normal":
+            cell.bonus_used = True

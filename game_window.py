@@ -2,8 +2,7 @@ import random
 import tkinter as tk
 from tkinter import messagebox
 
-from file_manager import load_board_layout, load_letters, load_words
-from game_logic import BOARD_SIZE, create_board, evaluate_move
+from game_logic import BOARD_SIZE, commit_move, create_board, evaluate_move
 
 
 CELL_SIZE = 39
@@ -45,14 +44,13 @@ BONUS_VIEW = {
 
 
 class GameWindow(tk.Frame):
-    def __init__(self, master):
+    def __init__(self, master, app, words, letters_scores, board_layout):
         super().__init__(master, bg="#f7f7f3")
 
-        self.words = load_words()
-        self.letters_scores = load_letters()
-        self.board_layout = load_board_layout()
-
-        self.board = create_board(self.board_layout)
+        self.app = app
+        self.words = words
+        self.letters_scores = letters_scores
+        self.board = create_board(board_layout)
 
         self.current_player = 0
 
@@ -79,7 +77,6 @@ class GameWindow(tk.Frame):
         self.score_var = tk.StringVar()
         self.selected_var = tk.StringVar()
         self.bag_var = tk.StringVar()
-        self.status_var = tk.StringVar()
 
         self.board_canvas = None
 
@@ -92,8 +89,6 @@ class GameWindow(tk.Frame):
             self.players[player_index]["score"] = 0
             self.players[player_index]["rack"] = []
             self.refill_rack(player_index)
-
-        self.status_var.set("Выберите букву и поставьте её на поле.")
 
     def create_letter_bag(self):
         bag = []
@@ -128,7 +123,7 @@ class GameWindow(tk.Frame):
     def create_widgets(self):
         title = tk.Label(
             self,
-            text="Скрэббл 0.9",
+            text="Скрэббл",
             font=("Segoe UI", 18, "bold"),
             bg="#f7f7f3",
             fg="#063f25",
@@ -221,15 +216,6 @@ class GameWindow(tk.Frame):
             wraplength=220,
         ).pack(anchor="w", pady=(0, 16))
 
-        tk.Label(
-            panel_inner,
-            textvariable=self.status_var,
-            font=("Segoe UI", 10),
-            bg="#ffffff",
-            wraplength=220,
-            justify="left",
-        ).pack(anchor="w", pady=(0, 16))
-
         button_style = {
             "font": ("Segoe UI", 10),
             "height": 2,
@@ -241,8 +227,8 @@ class GameWindow(tk.Frame):
 
         tk.Button(
             panel_inner,
-            text="Проверить ход",
-            command=self.check_move,
+            text="Проверить и подтвердить ход",
+            command=self.confirm_move,
             **button_style,
         ).pack(fill="x", pady=4)
 
@@ -255,8 +241,22 @@ class GameWindow(tk.Frame):
 
         tk.Button(
             panel_inner,
-            text="Новая партия",
-            command=self.restart_game,
+            text="Обновить буквы",
+            command=self.exchange_letters,
+            **button_style,
+        ).pack(fill="x", pady=4)
+
+        tk.Button(
+            panel_inner,
+            text="Пропустить ход",
+            command=self.skip_turn,
+            **button_style,
+        ).pack(fill="x", pady=4)
+
+        tk.Button(
+            panel_inner,
+            text="В главное меню",
+            command=self.app.show_menu,
             **button_style,
         ).pack(fill="x", pady=(20, 4))
 
@@ -306,6 +306,7 @@ class GameWindow(tk.Frame):
 
     def draw_board(self):
         self.board_canvas.delete("all")
+
         self.draw_headers()
         self.draw_cells()
 
@@ -390,6 +391,9 @@ class GameWindow(tk.Frame):
         self.on_board_click(row, col)
 
     def refresh_board(self):
+        self.draw_board()
+
+    def refresh_cell(self, row, col):
         self.draw_board()
 
     def refresh_rack(self):
@@ -500,7 +504,6 @@ class GameWindow(tk.Frame):
         cell.is_preview = True
 
         self.selected_rack_index = None
-        self.status_var.set("Буква размещена временно. Можно проверить ход.")
 
         self.refresh_all()
 
@@ -514,8 +517,6 @@ class GameWindow(tk.Frame):
         cell.letter = ""
         cell.is_preview = False
 
-        self.status_var.set("Буква возвращена на подставку.")
-
         self.refresh_all()
 
     def cancel_pending_move(self):
@@ -523,10 +524,9 @@ class GameWindow(tk.Frame):
             self.remove_preview_tile(row, col)
 
         self.selected_rack_index = None
-        self.status_var.set("Текущее размещение сброшено.")
         self.refresh_all()
 
-    def check_move(self):
+    def confirm_move(self):
         ok, error_text, words, score = evaluate_move(
             self.board,
             self.pending_tiles.keys(),
@@ -536,41 +536,73 @@ class GameWindow(tk.Frame):
 
         if not ok:
             messagebox.showwarning("Ход не принят", error_text)
-            self.status_var.set(error_text)
             return
 
-        words_text = ", ".join(words)
-
-        messagebox.showinfo(
-            "Ход корректен",
-            f"Слова: {words_text}\n"
-            f"Предварительные очки: {score}\n\n"
-            f"На следующем этапе будет добавлено подтверждение хода.",
+        text = (
+            f"Слова: {', '.join(words)}\n"
+            f"Очки за ход: {score}\n\n"
+            f"Подтвердить ход?"
         )
 
-        self.status_var.set(
-            f"Ход корректен. Слова: {words_text}. Предварительные очки: {score}."
+        if not messagebox.askyesno("Подтверждение хода", text):
+            return
+
+        commit_move(
+            self.board,
+            self.pending_tiles.keys(),
+            self.current_player + 1,
         )
 
-    def restart_game(self):
-        self.board = create_board(self.board_layout)
-        self.current_player = 0
-        self.players = [
-            {
-                "name": "Игрок 1",
-                "score": 0,
-                "rack": [],
-            },
-            {
-                "name": "Игрок 2",
-                "score": 0,
-                "rack": [],
-            },
-        ]
+        self.players[self.current_player]["score"] += score
 
-        self.bag = self.create_letter_bag()
-        self.pending_tiles = {}
+        self.pending_tiles.clear()
         self.selected_rack_index = None
 
-        self.start_game()
+        self.refill_rack(self.current_player)
+
+        self.current_player = 1 - self.current_player
+
         self.refresh_all()
+
+    def exchange_letters(self):
+        if self.pending_tiles:
+            messagebox.showwarning(
+                "Скрэббл",
+                "Сначала сбросьте размещённые буквы на поле.",
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Обновить буквы",
+            "Заменить все буквы текущего игрока и передать ход?",
+        ):
+            return
+
+        rack = self.players[self.current_player]["rack"]
+
+        for letter in rack:
+            if letter:
+                self.bag.append(letter)
+
+        random.shuffle(self.bag)
+
+        self.players[self.current_player]["rack"] = ["" for _ in range(7)]
+        self.refill_rack(self.current_player)
+
+        self.selected_rack_index = None
+        self.current_player = 1 - self.current_player
+
+        self.refresh_all()
+
+    def skip_turn(self):
+        if self.pending_tiles:
+            messagebox.showwarning(
+                "Скрэббл",
+                "Сначала сбросьте размещённые буквы на поле.",
+            )
+            return
+
+        if messagebox.askyesno("Пропуск хода", "Пропустить ход текущего игрока?"):
+            self.selected_rack_index = None
+            self.current_player = 1 - self.current_player
+            self.refresh_all()
