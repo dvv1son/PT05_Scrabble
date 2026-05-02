@@ -246,6 +246,7 @@ def evaluate_move(board, pending_positions, words_set, letters_scores):
 
     return True, "", word_texts, total_score
 
+
 def commit_move(board, pending_positions, player_number):
     for row, col in pending_positions:
         cell = board[row][col]

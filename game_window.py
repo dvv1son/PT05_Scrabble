@@ -255,10 +255,17 @@ class GameWindow(tk.Frame):
 
         tk.Button(
             panel_inner,
+            text="Завершить игру",
+            command=self.finish_game,
+            **button_style,
+        ).pack(fill="x", pady=(20, 4))
+
+        tk.Button(
+            panel_inner,
             text="В главное меню",
             command=self.app.show_menu,
             **button_style,
-        ).pack(fill="x", pady=(20, 4))
+        ).pack(fill="x", pady=4)
 
     def create_rack_panel(self):
         rack_frame = tk.Frame(self, bg="#f7f7f3")
@@ -606,3 +613,71 @@ class GameWindow(tk.Frame):
             self.selected_rack_index = None
             self.current_player = 1 - self.current_player
             self.refresh_all()
+
+    def finish_game(self):
+        p1 = self.players[0]["score"]
+        p2 = self.players[1]["score"]
+
+        if p1 > p2:
+            winner = "Победил Игрок 1"
+        elif p2 > p1:
+            winner = "Победил Игрок 2"
+        else:
+            winner = "Ничья"
+
+        end_window = tk.Toplevel(self)
+        end_window.title("Партия завершена")
+        end_window.geometry("520x320")
+        end_window.resizable(False, False)
+        end_window.configure(bg="#f7f7f3")
+
+        tk.Label(
+            end_window,
+            text="Партия завершена!",
+            font=("Segoe UI", 22, "bold"),
+            bg="#f7f7f3",
+            fg="#063f25",
+        ).pack(pady=(25, 15))
+
+        tk.Label(
+            end_window,
+            text=f"Игрок 1: {p1} очков\nИгрок 2: {p2} очков\n\n{winner}",
+            font=("Segoe UI", 16),
+            bg="#f7f7f3",
+            justify="center",
+        ).pack(pady=10)
+
+        buttons = tk.Frame(end_window, bg="#f7f7f3")
+        buttons.pack(pady=20)
+
+        tk.Button(
+            buttons,
+            text="Новая игра",
+            width=14,
+            font=("Segoe UI", 10),
+            command=lambda: self.restart_from_end(end_window),
+        ).pack(side="left", padx=8)
+
+        tk.Button(
+            buttons,
+            text="В главное меню",
+            width=14,
+            font=("Segoe UI", 10),
+            command=lambda: self.to_menu_from_end(end_window),
+        ).pack(side="left", padx=8)
+
+        tk.Button(
+            buttons,
+            text="Выход",
+            width=14,
+            font=("Segoe UI", 10),
+            command=self.app.root.destroy,
+        ).pack(side="left", padx=8)
+
+    def restart_from_end(self, window):
+        window.destroy()
+        self.app.start_new_game()
+
+    def to_menu_from_end(self, window):
+        window.destroy()
+        self.app.show_menu()
