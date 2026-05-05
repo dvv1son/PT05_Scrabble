@@ -2,8 +2,8 @@ import random
 import tkinter as tk
 from tkinter import messagebox
 
+from end_window import EndWindow
 from game_logic import BOARD_SIZE, commit_move, create_board, evaluate_move
-
 
 CELL_SIZE = 39
 HEADER_SIZE = 28
