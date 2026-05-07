@@ -1,9 +1,11 @@
+from collections import Counter
 import random
 import tkinter as tk
 from tkinter import messagebox
 
 from end_window import EndWindow
 from game_logic import BOARD_SIZE, commit_move, create_board, evaluate_move
+
 
 CELL_SIZE = 39
 HEADER_SIZE = 28
@@ -88,7 +90,15 @@ class GameWindow(tk.Frame):
         for player_index in range(2):
             self.players[player_index]["score"] = 0
             self.players[player_index]["rack"] = []
-            self.refill_rack(player_index)
+
+        start_word = self.choose_start_word()
+
+        if start_word:
+            self.players[0]["rack"] = self.create_rack_from_word(start_word)
+        else:
+            self.refill_rack(0)
+
+        self.refill_rack(1)
 
     def create_letter_bag(self):
         bag = []
@@ -109,6 +119,55 @@ class GameWindow(tk.Frame):
 
         random.shuffle(bag)
         return bag
+
+    def choose_start_word(self):
+        available_letters = Counter(self.bag)
+        candidates = []
+
+        for word in self.words:
+            word = word.strip().upper()
+
+            if not 2 <= len(word) <= 7:
+                continue
+
+            if not all(letter in self.letters_scores for letter in word):
+                continue
+
+            word_letters = Counter(word)
+
+            can_create_word = True
+
+            for letter, count in word_letters.items():
+                if available_letters[letter] < count:
+                    can_create_word = False
+                    break
+
+            if can_create_word:
+                candidates.append(word)
+
+        if not candidates:
+            return ""
+
+        return random.choice(candidates)
+
+    def create_rack_from_word(self, word):
+        rack = []
+
+        for letter in word:
+            rack.append(letter)
+
+            if letter in self.bag:
+                self.bag.remove(letter)
+
+        while len(rack) < 7 and self.bag:
+            rack.append(self.bag.pop())
+
+        while len(rack) < 7:
+            rack.append("")
+
+        random.shuffle(rack)
+
+        return rack
 
     def refill_rack(self, player_index):
         rack = self.players[player_index]["rack"]
@@ -625,59 +684,16 @@ class GameWindow(tk.Frame):
         else:
             winner = "Ничья"
 
-        end_window = tk.Toplevel(self)
-        end_window.title("Партия завершена")
-        end_window.geometry("520x320")
-        end_window.resizable(False, False)
-        end_window.configure(bg="#f7f7f3")
+        result = {
+            "score_1": p1,
+            "score_2": p2,
+            "winner": winner,
+        }
 
-        tk.Label(
-            end_window,
-            text="Партия завершена!",
-            font=("Segoe UI", 22, "bold"),
-            bg="#f7f7f3",
-            fg="#063f25",
-        ).pack(pady=(25, 15))
-
-        tk.Label(
-            end_window,
-            text=f"Игрок 1: {p1} очков\nИгрок 2: {p2} очков\n\n{winner}",
-            font=("Segoe UI", 16),
-            bg="#f7f7f3",
-            justify="center",
-        ).pack(pady=10)
-
-        buttons = tk.Frame(end_window, bg="#f7f7f3")
-        buttons.pack(pady=20)
-
-        tk.Button(
-            buttons,
-            text="Новая игра",
-            width=14,
-            font=("Segoe UI", 10),
-            command=lambda: self.restart_from_end(end_window),
-        ).pack(side="left", padx=8)
-
-        tk.Button(
-            buttons,
-            text="В главное меню",
-            width=14,
-            font=("Segoe UI", 10),
-            command=lambda: self.to_menu_from_end(end_window),
-        ).pack(side="left", padx=8)
-
-        tk.Button(
-            buttons,
-            text="Выход",
-            width=14,
-            font=("Segoe UI", 10),
-            command=self.app.root.destroy,
-        ).pack(side="left", padx=8)
-
-    def restart_from_end(self, window):
-        window.destroy()
-        self.app.start_new_game()
-
-    def to_menu_from_end(self, window):
-        window.destroy()
-        self.app.show_menu()
+        EndWindow(
+            self,
+            result=result,
+            on_new_game=self.app.start_new_game,
+            on_back_to_menu=self.app.show_menu,
+            on_exit=self.app.root.destroy,
+        )
